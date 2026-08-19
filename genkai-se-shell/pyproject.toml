@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genkai-se-shell"
+version = "0.2.0"
+description = "限界SEお姉さんがstdoutと失敗コマンドに割り込むzsh"
+requires-python = ">=3.9"
+
+[project.scripts]
+genkai-hook = "genkai_shell.hook:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["genkai_shell*"]

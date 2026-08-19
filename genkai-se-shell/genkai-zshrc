@@ -1,0 +1,80 @@
+# 限界SEお姉さんシェル / zsh integration
+# mesgaki-shell の設計に合わせ、stdoutは触らず、stderrだけを一時退避する。
+
+if [[ -z "${ZSH_VERSION:-}" ]]; then
+  return 0
+fi
+
+typeset -g GENKAI_ENABLED="${GENKAI_ENABLED:-1}"
+typeset -g _GENKAI_LAST_CMD=''
+typeset -g _GENKAI_STDERR_FILE=''
+typeset -g _GENKAI_STDERR_FD=''
+
+_genkai_hook() {
+  local code="$1"
+  [[ "$GENKAI_ENABLED" == 1 ]] || return 0
+  (( code != 0 )) || return 0
+  local output_target=/dev/tty
+  [[ -t 2 ]] || output_target=/dev/stderr
+
+  if [[ -n "$_GENKAI_STDERR_FILE" && -f "$_GENKAI_STDERR_FILE" ]]; then
+    python3 -m genkai_shell.hook "$code" "$_GENKAI_LAST_CMD" \
+      <"$_GENKAI_STDERR_FILE" 2>"$output_target"
+  else
+    python3 -m genkai_shell.hook "$code" "$_GENKAI_LAST_CMD" \
+      </dev/null 2>"$output_target"
+  fi
+}
+
+_genkai_preexec() {
+  _GENKAI_LAST_CMD="$1"
+  _GENKAI_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/genkai-stderr.XXXXXX")" || return 0
+
+  # fd 3 keeps the original terminal stderr. The command's stderr is captured
+  # without losing it; it is replayed immediately after the command finishes.
+  exec 3>&2
+  exec 2>"$_GENKAI_STDERR_FILE"
+}
+
+_genkai_precmd() {
+  local code=$?
+
+  if [[ -n "$_GENKAI_STDERR_FILE" && -f "$_GENKAI_STDERR_FILE" ]]; then
+    # Restore the terminal before replaying stderr and invoking the hook.
+    exec 2>&3 3>&-
+    cat "$_GENKAI_STDERR_FILE" >&2
+    _genkai_hook "$code"
+    rm -f -- "$_GENKAI_STDERR_FILE"
+    _GENKAI_STDERR_FILE=''
+  fi
+  return "$code"
+}
+
+# 二重sourceしてもフックを重複登録しない。
+preexec_functions=(${preexec_functions:#_genkai_preexec})
+precmd_functions=(${precmd_functions:#_genkai_precmd})
+preexec_functions+=( _genkai_preexec )
+precmd_functions+=( _genkai_precmd )
+
+genkai_off() {
+  export GENKAI_ENABLED=0
+  print -u2 -- '(限界SE) ふん、静かにしてあげる'
+}
+
+genkai_on() {
+  export GENKAI_ENABLED=1
+  print -u2 -- '(限界SE) また来たよ。今度は失敗しないでね'
+}
+
+if [[ -o interactive ]]; then
+  autoload -Uz compinit
+  mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"
+  compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/genkai-zcompdump"
+  autoload -Uz colors && colors
+  setopt interactivecomments promptsubst histignorealldups histignorespace
+  bindkey -e
+  PROMPT='%F{cyan}限界SE%f %F{yellow}%~%f %# '
+  RPROMPT='%F{red}[残業中]%f'
+  print -u2 -- '限界SEお姉さんシェル (zsh integration)'
+  print -u2 -- 'stderrを捕捉し、失敗時だけ分類してコメントします。genkai_off / genkai_on'
+fi

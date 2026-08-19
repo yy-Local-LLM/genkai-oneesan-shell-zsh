@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v zsh >/dev/null 2>&1; then
+  echo 'zsh が見つかりません。先に zsh をインストールしてください。' >&2
+  exit 127
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export GENKAI_SHELL_ROOT="$script_dir"
+export PYTHONPATH="$script_dir${PYTHONPATH:+:$PYTHONPATH}"
+export ZDOTDIR="$script_dir"
+# -f は使わず、専用ZDOTDIR/.zshrcだけをzshの正規手順で読む。
+exec zsh -i

@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+VERSION="0.1.0"
+PATTERN="random"
+
+usage() {
+  cat <<'EOF'
+限界SEお姉さんシェル
+
+使い方:
+  genkai-se [--pattern NAME] command [args...]
+  genkai-se --interactive
+
+パターン:
+  random    状況に応じてランダム（既定）
+  calm      まだ余裕があるふり
+  tired     だいぶ限界
+  review    コードレビュー口調
+  incident  障害対応モード
+EOF
+}
+
+interactive() {
+  printf '限界SEお姉さんシェル v%s\n' "$VERSION"
+  printf 'コマンドのstdoutに割り込みます。exit または Ctrl-D で終了。\n\n'
+  while true; do
+    printf '限界SE> '
+    IFS= read -r line || { printf '\n'; break; }
+    [[ -z "$line" ]] && continue
+    [[ "$line" == "exit" || "$line" == "quit" ]] && break
+    [[ "$line" == "help" ]] && { usage; continue; }
+
+    # Keep output live: each line is forwarded as soon as the command emits it.
+    if [[ "$line" == cd\ * || "$line" == cd ]]; then
+      eval "$line"
+      status=$?
+    else
+      eval "$line" | while IFS= read -r out || [[ -n "$out" ]]; do
+        printf '  │ %s\n' "$out"
+      done
+      status=${PIPESTATUS[0]}
+    fi
+    printf '%s\n\n' "$(say "$status" "$line" "")"
+  done
+}
+
+pick() {
+  local n=$#
+  # RANDOM is available in bash and keeps this dependency-free.
+  local index=$((RANDOM % n + 1))
+  printf '%s' "${!index}"
+}
+
+say() {
+  local status="$1" command_text="$2" output="$3"
+  local line_count=0
+  [[ -n "$output" ]] && line_count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
+
+  if [[ "$PATTERN" == "random" ]]; then
+    if (( status != 0 )); then PATTERN="incident"
+    elif (( line_count > 30 )); then PATTERN="tired"
+    else PATTERN="$(pick calm tired review)"
+    fi
+  fi
+
+  case "$PATTERN" in
+    calm)
+      if (( status == 0 )); then
+        pick "「はい、通ってる。今日はえらいね」" "「正常終了。私のメンタルより安定してる」" "「問題なし。今のうちに休憩しよ」"
+      else
+        pick "「あー、落ちたね。まあログ見ればわかるから」" "「失敗。原因調査は明日の私に任せたい」"
+      fi
+      ;;
+    tired)
+      if (( status == 0 )); then
+        pick "「成功……したね。出力 ${line_count} 行。多いなあ」" "「終わった。はい、終わったことにしよう」" "「通ったけど、これ本番で動くかな……」"
+      else
+        pick "「失敗かぁ。再現する元気はないから、とりあえずログ貼っといて」" "「終了コード ${status}。はい、今日の予定が増えました」"
+      fi
+      ;;
+    review)
+      if (( status == 0 )); then
+        pick "「LGTM。ただし私ならこのコマンドを本番では叩かない」" "「動いてるのでマージ。レビュー観点？ 明日考える」" "「出力はきれい。実装者の睡眠時間だけが心配」"
+      else
+        pick "「FAIL。まず再現手順をください。あと担当者もください」" "「このエラー、昨日も見た。つまりまだ直ってない」"
+      fi
+      ;;
+    incident)
+      if (( status == 0 )); then
+        pick "「復旧確認。誰も触ってないよね？ 本当に？」" "「正常化。ポストモーテムは今週中に……いや、来週で」"
+      else
+        pick "「障害です。落ち着いて。落ち着ける状況ではないけど」" "「緊急度P1。まず ${command_text} を二度と本番で直打ちしないで」" "「原因は不明、影響範囲も不明、私の残業時間だけは明確」"
+      fi
+      ;;
+    *)
+      printf '「未知の人格設定。私も限界です」'
+      ;;
+  esac
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then usage; exit 0; fi
+if [[ "${1:-}" == "--version" ]]; then echo "$VERSION"; exit 0; fi
+if [[ "${1:-}" == "--interactive" || $# == 0 ]]; then interactive; exit 0; fi
+if [[ "${1:-}" == "--pattern" ]]; then
+  PATTERN="${2:-}"; shift 2
+fi
+if (( $# == 0 )); then usage; exit 2; fi
+
+command_text="$*"
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+# The command's stdout is captured, annotated, then emitted by this shell.
+"$@" >"$tmp"
+status=$?
+output=$(<"$tmp")
+
+if [[ -n "$output" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '  │ %s\n' "$line"
+  done < "$tmp"
+fi
+printf '\n%s\n' "$(say "$status" "$command_text" "$output")"
+exit "$status"
